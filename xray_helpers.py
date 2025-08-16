@@ -9,9 +9,9 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from sklearn.model_selection import train_test_split
 
-TRAIN_VAl = ["train", "val"]
+TRAIN_VAL = ["train", "val"]
 CLASS_NAMES = ["NORMAL", "PNEUMONIA"]
-KAGGLE_DATASET_NAME= "paultimothymooney/chest-xray-pneumonia"
+KAGGLE_DATASET_NAME = "paultimothymooney/chest-xray-pneumonia"
 
 
 def seed_all(seed=42):
@@ -61,7 +61,7 @@ def copy_files(file_paths, labels, dest_dir):
 
 def show_split_counts(base_dir, title):
     print(f"{title}:")
-    for split in TRAIN_VAl:
+    for split in TRAIN_VAL:
         for cls in CLASS_NAMES:
             folder = os.path.join(base_dir, split, cls)
             print(f"{split}/{cls}: {len(os.listdir(folder))}")
@@ -72,7 +72,7 @@ def balance_val_train_split(base_dir):
     show_split_counts(base_dir, "Before split")
 
     all_data = []
-    for split in TRAIN_VAl:
+    for split in TRAIN_VAL:
         for cls in CLASS_NAMES:
             folder = os.path.join(base_dir, split, cls)
             for folder_name in os.listdir(folder):
@@ -124,6 +124,7 @@ def get_eval_transform(img_size):
 def get_dataloaders(train_dir, val_dir, test_dir, batch_size, num_workers, img_size):
     train_tfms = get_train_transforms(img_size)
     eval_tfms = get_eval_transform(img_size)
+    pin = torch.cuda.is_available()
 
     data_sets = {
         'train_ds' : datasets.ImageFolder(train_dir, transform=train_tfms),
@@ -131,16 +132,16 @@ def get_dataloaders(train_dir, val_dir, test_dir, batch_size, num_workers, img_s
         'test_ds' : datasets.ImageFolder(test_dir, transform=eval_tfms)}
 
     loaders = {
-        'train_loader' : DataLoader(data_sets['train_ds'], batch_size=batch_size, shuffle=True,  num_workers=num_workers, pin_memory=True),
-        'val_loader' : DataLoader(data_sets['val_ds'], batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True),
-        'test_loader' : DataLoader(data_sets['test_ds'], batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)}
+        'train_loader' : DataLoader(data_sets['train_ds'], batch_size=batch_size, shuffle=True,  num_workers=num_workers, pin_memory=pin),
+        'val_loader' : DataLoader(data_sets['val_ds'], batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=pin),
+        'test_loader' : DataLoader(data_sets['test_ds'], batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=pin)}
 
     return data_sets, loaders
 
 
 # ---------- plots ----------
 def plot_distribution_from_folder(base_dir, title_prefix):
-    for split in TRAIN_VAl:
+    for split in TRAIN_VAL:
         counts = []
         for cls in CLASS_NAMES:
             folder = os.path.join(base_dir, split, cls)

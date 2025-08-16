@@ -3,15 +3,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms ,models
+from torchvision import models
 from tqdm import tqdm
 from contextlib import nullcontext
 from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score, roc_curve, precision_recall_curve, average_precision_score
 from xray_helpers import plot_roc_curve, CLASS_NAMES
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-EPOCHS = 15
 
 
 # ---------- CNN model ----------
@@ -30,7 +26,8 @@ class PneumoCNN(nn.Module):
 
 
 # ---------- train/eval core ----------
-def _run_epoch(model, loader, criterion, *, is_train, optimizer=None, acc_threshold=0.5, epochNumber=0, tag=""):
+def _run_epoch(model, loader, criterion, device, *, is_train, optimizer=None,
+               acc_threshold=0.5, epochNumber=0, epochs=None, tag=""):
     """Core loop used by both train and eval."""
     model.train() if is_train else model.eval()
     ctx = nullcontext() if is_train else torch.inference_mode()
@@ -39,7 +36,7 @@ def _run_epoch(model, loader, criterion, *, is_train, optimizer=None, acc_thresh
     all_probs, all_targets = [], []
 
     with ctx:
-        for images, targets in tqdm(loader, desc=f"[{tag}] Epoch {epochNumber}/{EPOCHS}"):
+        for images, targets in tqdm(loader, desc=f"[{tag}] Epoch {epochNumber}/{epochs}"):
             images = images.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True).float()
 
@@ -73,19 +70,19 @@ def _run_epoch(model, loader, criterion, *, is_train, optimizer=None, acc_thresh
     return avg_loss, acc, auc, probs_np, targets_np
 
 
-def train_one_epoch(model, loader, epochNumber, optimizer, criterion):
-    return _run_epoch(model, loader, criterion,
+def train_one_epoch(model, loader, epochNumber, optimizer, criterion, device):
+    return _run_epoch(model, loader, criterion, device,
                       is_train=True, optimizer=optimizer,
                       acc_threshold=0.5, epochNumber=epochNumber, tag="Train")
 
 
-def eval_one_epoch(model, loader, epochNumber, criterion):
-    return _run_epoch(model, loader, criterion,
+def eval_one_epoch(model, loader, epochNumber, criterion, device):
+    return _run_epoch(model, loader, criterion, device,
                       is_train=False, optimizer=None,
                       acc_threshold=0.5, epochNumber=epochNumber, tag="Eval")
 
 
-def fit(model, train_loader, val_loader, criterion, optimizer, scheduler=None, epochs=15, patience=10):
+def fit(model, train_loader, val_loader, criterion, optimizer, device, scheduler=None, epochs=15, patience=10):
     best_val_auc, no_improve = -np.inf, 0
     ckpt_path = "best_cnn_pneumonia.pt"
     history = {"train_loss": [], "train_acc": [], "train_auc": [],
@@ -93,8 +90,8 @@ def fit(model, train_loader, val_loader, criterion, optimizer, scheduler=None, e
 
     start = time.time()
     for epoch in range(1, epochs+1):
-        tr_loss, tr_acc, tr_auc, _, _ = train_one_epoch(model, train_loader, epoch, optimizer, criterion)
-        val_loss, val_acc, val_auc, _, _ = eval_one_epoch(model, val_loader, epoch, criterion)
+        tr_loss, tr_acc, tr_auc, _, _ = train_one_epoch(model, train_loader, epoch, optimizer, criterion, device, epochs)
+        val_loss, val_acc, val_auc, _, _ = eval_one_epoch(model, val_loader, epoch, criterion, device, epochs)
 
         if scheduler is not None:
             scheduler.step(val_auc)
@@ -122,24 +119,18 @@ def fit(model, train_loader, val_loader, criterion, optimizer, scheduler=None, e
     print(f"Training finished in {(time.time()-start)/60:.1f} min. Best val AUC: {best_val_auc:.4f}")
     return history, best_val_auc
 
-
-# Predict image function
-def predict_image(path, model, tfms, threshold=0.5):
-    model.eval()
-    img = Image.open(path).convert("RGB")
-    x = tfms(img).unsqueeze(0).to(device)
-    with torch.no_grad():
-        logit = model(x)
-        prob = torch.sigmoid(logit).item()
-    pred = int(prob >= threshold)
-    return prob, pred  # P(pneumonia), predicted label
-
-
 # ---------- operating point & test ----------
-def pick_threshold_from_val(y_true, y_prob):
-    prec, rec, thr = precision_recall_curve(y_true, y_prob)  # thr len = len(prec)-1
-    f1 = 2*prec[:-1]*rec[:-1]/(prec[:-1]+rec[:-1]+1e-12)
-    return float(thr[np.argmax(f1)])
+# def pick_threshold_from_val(y_true, y_prob):
+#     prec, rec, thr = precision_recall_curve(y_true, y_prob)  # thr len = len(prec)-1
+#     f1 = 2*prec[:-1]*rec[:-1]/(prec[:-1]+rec[:-1]+1e-12)
+#     return float(thr[np.argmax(f1)])
+
+
+def pick_threshold_youden(y_true, y_prob):
+    fpr, tpr, thr = roc_curve(y_true, y_prob)
+    j = tpr - fpr
+    idx = j[1:].argmax() + 1  # thresholds align with fpr/tpr[1:]
+    return float(thr[idx-1])
 
 
 def evaluate_with_threshold(model, loader, criterion, threshold):
