@@ -87,8 +87,8 @@ def eval_one_epoch(model, loader, epochNumber, criterion, device, epochs):
 def fit(model, train_loader, val_loader, criterion, optimizer, device, scheduler=None, epochs=15, patience=10):
     best_val_auc, no_improve = -np.inf, 0
     ckpt_path = "best_cnn_pneumonia.pt"
-    history = {"train_loss": [], "train_acc": [], "train_auc": [],
-               "val_loss": [], "val_acc": [], "val_auc": []}
+    history = {"train_loss": [], "train_acc": [], "train_auc": [], "train_pr_auc": [],
+               "val_loss": [], "val_acc": [], "val_auc": [], "val_pr_auc": []}
 
     start = time.time()
     for epoch in range(1, epochs+1):
