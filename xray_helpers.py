@@ -149,7 +149,7 @@ def _run_epoch(model, loader, criterion, *, is_train, optimizer=None, acc_thresh
             images  = images.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True).float()
 
-            logits = model(images).squeeze(1)
+            logits = model(images)
             loss   = criterion(logits, targets)
 
             if is_train:
@@ -320,4 +320,3 @@ def get_dataloaders(train_dir, val_dir, test_dir, batch_size=BATCH_SIZE, num_wor
         'test_loader' : DataLoader(data_sets['test_ds'], batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)}
 
     return data_sets, loaders
-
