@@ -106,7 +106,7 @@ def get_train_transforms(img_size):
         transforms.Resize((256, 256)),
         transforms.RandomResizedCrop(img_size, scale=(0.9, 1.0)),
         transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomRotation(10),
+        transforms.RandomRotation(20),
         transforms.ToTensor(),
         normalize,
     ])

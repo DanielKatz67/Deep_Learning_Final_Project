@@ -2,7 +2,6 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
-from PIL import Image
 from torchvision import models
 from tqdm import tqdm
 from contextlib import nullcontext
@@ -12,7 +11,7 @@ from xray_helpers import plot_roc_curve, CLASS_NAMES
 
 # ---------- CNN model ----------
 class PneumoCNN(nn.Module):
-    def __init__(self, dropout_p=0.2):
+    def __init__(self, dropout_p=0.4):
         super(PneumoCNN, self).__init__()
         m = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
         m.fc = nn.Sequential(
@@ -135,6 +134,10 @@ def pick_threshold_youden(y_true, y_prob):
 
 def evaluate_with_threshold(model, loader, criterion, threshold, device, epochs):
     loss, acc05, auc, probs, targets = eval_one_epoch(model, loader, 1, criterion, device, epochs)
+    # Print first 10 probabilities and targets for inspection
+    print("probs[:10] =", probs[:10])
+    print("targets[:10] =", targets[:10])
+
     preds = (probs >= threshold).astype(int)
     acc_thr = (preds == targets).mean()
     cm = confusion_matrix(targets, preds)
