@@ -26,7 +26,7 @@ class PneumoCNN(nn.Module):
 
 
 # ---------- train/eval core ----------
-def _run_epoch(model, loader, criterion, device, *, is_train, optimizer=None,
+def _run_epoch(model, loader, criterion, device, is_train, optimizer=None,
                acc_threshold=0.5, epochNumber=0, epochs=None, tag=""):
     """Core loop used by both train and eval."""
     model.train() if is_train else model.eval()
@@ -70,16 +70,16 @@ def _run_epoch(model, loader, criterion, device, *, is_train, optimizer=None,
     return avg_loss, acc, auc, probs_np, targets_np
 
 
-def train_one_epoch(model, loader, epochNumber, optimizer, criterion, device):
+def train_one_epoch(model, loader, epochNumber, optimizer, criterion, device, epochs):
     return _run_epoch(model, loader, criterion, device,
                       is_train=True, optimizer=optimizer,
-                      acc_threshold=0.5, epochNumber=epochNumber, tag="Train")
+                      acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Train")
 
 
-def eval_one_epoch(model, loader, epochNumber, criterion, device):
+def eval_one_epoch(model, loader, epochNumber, criterion, device, epochs):
     return _run_epoch(model, loader, criterion, device,
                       is_train=False, optimizer=None,
-                      acc_threshold=0.5, epochNumber=epochNumber, tag="Eval")
+                      acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Eval")
 
 
 def fit(model, train_loader, val_loader, criterion, optimizer, device, scheduler=None, epochs=15, patience=10):
@@ -134,7 +134,7 @@ def pick_threshold_youden(y_true, y_prob):
 
 
 def evaluate_with_threshold(model, loader, criterion, threshold):
-    loss, acc05, auc, probs, targets = eval_one_epoch(model, loader, epochNumber=0, criterion=criterion)
+    loss, acc05, auc, probs, targets = eval_one_epoch(model, loader, epochNumber=0, criterion=criterion, epochs=15)
     preds = (probs >= threshold).astype(int)
     acc_thr = (preds == targets).mean()
     cm = confusion_matrix(targets, preds)
