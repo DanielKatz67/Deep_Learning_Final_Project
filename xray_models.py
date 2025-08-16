@@ -61,12 +61,15 @@ def _run_epoch(model, loader, criterion, device, is_train, optimizer=None,
     probs_np = torch.cat(all_probs).numpy()
     targets_np = torch.cat(all_targets).numpy()
 
-    try:
-        auc = roc_auc_score(targets_np, probs_np)
-    except Exception:
-        auc = float("nan")
+    # ROC-AUC
+    try: auc = roc_auc_score(targets_np, probs_np)
+    except Exception: auc = float("nan")
 
-    return avg_loss, acc, auc, probs_np, targets_np
+    # PR-AUC (Average Precision)
+    try: pr_auc = average_precision_score(targets_np, probs_np)
+    except Exception: pr_auc = float("nan")
+
+    return avg_loss, acc, auc, pr_auc, probs_np, targets_np
 
 
 def train_one_epoch(model, loader, epochNumber, optimizer, criterion, device, epochs):
@@ -89,17 +92,17 @@ def fit(model, train_loader, val_loader, criterion, optimizer, device, scheduler
 
     start = time.time()
     for epoch in range(1, epochs+1):
-        tr_loss, tr_acc, tr_auc, _, _ = train_one_epoch(model, train_loader, epoch, optimizer, criterion, device, epochs)
-        val_loss, val_acc, val_auc, _, _ = eval_one_epoch(model, val_loader, epoch, criterion, device, epochs)
+        tr_loss, tr_acc, tr_auc, tr_pr, _, _ = train_one_epoch(model, train_loader, epoch, optimizer, criterion, device, epochs)
+        val_loss, val_acc, val_auc, val_pr, _, _ = eval_one_epoch(model, val_loader, epoch, criterion, device, epochs)
 
         if scheduler is not None:
             scheduler.step(val_auc)
 
-        history["train_loss"].append(tr_loss); history["train_acc"].append(tr_acc); history["train_auc"].append(tr_auc)
-        history["val_loss"].append(val_loss); history["val_acc"].append(val_acc); history["val_auc"].append(val_auc)
+        history["train_loss"].append(tr_loss); history["train_acc"].append(tr_acc); history["train_pr_auc"].append(tr_pr); history["train_auc"].append(tr_auc)
+        history["val_loss"].append(val_loss); history["val_acc"].append(val_acc); history["val_pr_auc"].append(val_pr); history["val_auc"].append(val_auc)
 
-        print(f"Train Loss: {tr_loss:.4f}, Accuracy: {tr_acc:.4f}, AUC: {tr_auc:.4f}")
-        print(f"Val Loss: {val_loss:.4f}, Accuracy: {val_acc:.4f}, AUC: {val_auc:.4f}")
+        print(f"Train Loss: {tr_loss:.4f}, Accuracy: {tr_acc:.4f}, AUC: {tr_auc:.4f}, PR {tr_pr:.4f}")
+        print(f"Val Loss: {val_loss:.4f}, Accuracy: {val_acc:.4f}, AUC: {val_auc:.4f}, PR {val_pr:.4f}")
 
         # Early stopping & checkpoint
         if val_auc > best_val_auc:
