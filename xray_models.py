@@ -133,8 +133,8 @@ def pick_threshold_youden(y_true, y_prob):
     return float(thr[idx-1])
 
 
-def evaluate_with_threshold(model, loader, criterion, threshold):
-    loss, acc05, auc, probs, targets = eval_one_epoch(model, loader, epochNumber=0, criterion=criterion, epochs=15)
+def evaluate_with_threshold(model, loader, criterion, threshold, device, epochs):
+    loss, acc05, auc, probs, targets = eval_one_epoch(model, loader, 1, criterion, device, epochs)
     preds = (probs >= threshold).astype(int)
     acc_thr = (preds == targets).mean()
     cm = confusion_matrix(targets, preds)

@@ -91,6 +91,7 @@ def balance_val_train_split(base_dir):
     copy_files(val_paths, val_labels, os.path.join(new_base, 'val'))
 
     show_split_counts(new_base, "After split")
+    print("New dir:", new_base)
 
     return new_base
 
