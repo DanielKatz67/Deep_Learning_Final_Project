@@ -273,3 +273,51 @@ def evaluate_with_threshold(model, loader, criterion, threshold):
     #         "specificity":spec, "sensitivity":sens,
     #         "balanced_acc":bal_acc, "pr_auc":pr_auc,
     #         "cm":cm, "probs":probs, "targets":targets}
+
+
+# ---------- transforms & dataloader helpers ----------
+IMG_SIZE = 224
+BATCH_SIZE = 64
+NUM_WORKERS = 2
+
+normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std =[0.229, 0.224, 0.225])
+
+
+def get_train_tfms(img_size=IMG_SIZE):
+    return transforms.Compose([
+        transforms.Grayscale(num_output_channels=3),
+        transforms.Resize((256, 256)),
+        transforms.RandomResizedCrop(img_size, scale=(0.9, 1.0)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomRotation(10),
+        transforms.ToTensor(),
+        normalize,
+    ])
+
+
+def get_eval_tfms(img_size=IMG_SIZE):
+    return transforms.Compose([
+        transforms.Grayscale(num_output_channels=3),
+        transforms.Resize((256, 256)),
+        transforms.CenterCrop(img_size),
+        transforms.ToTensor(),
+        normalize,
+    ])
+
+
+def get_dataloaders(train_dir, val_dir, test_dir, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, img_size=IMG_SIZE):
+    train_tfms = get_train_tfms(img_size)
+    eval_tfms = get_eval_tfms(img_size)
+
+    data_sets = {
+        'train_ds' : datasets.ImageFolder(train_dir, transform=train_tfms),
+        'val_ds' : datasets.ImageFolder(val_dir, transform=eval_tfms),
+        'test_ds' : datasets.ImageFolder(test_dir, transform=eval_tfms)}
+
+    loaders = {
+        'train_loader' : DataLoader(data_sets['train_ds'], batch_size=batch_size, shuffle=True,  num_workers=num_workers, pin_memory=True),
+        'val_loader' : DataLoader(data_sets['val_ds'], batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True),
+        'test_loader' : DataLoader(data_sets['test_ds'], batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)}
+
+    return data_sets, loaders
+
