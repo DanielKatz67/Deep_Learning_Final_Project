@@ -136,7 +136,7 @@ def pick_threshold_youden(y_true, y_prob):
 
 
 def evaluate_with_threshold(model, loader, criterion, threshold, device, epochs):
-    loss, acc05, auc, probs, targets = eval_one_epoch(model, loader, 1, criterion, device, epochs)
+    loss, acc05, auc, pr_auc, probs, targets = eval_one_epoch(model, loader, 1, criterion, device, epochs)
     # Print first 10 probabilities and targets for inspection
     print("probs[:10] =", probs[:10])
     print("targets[:10] =", targets[:10])
@@ -151,8 +151,9 @@ def evaluate_with_threshold(model, loader, criterion, threshold, device, epochs)
     pr_auc = average_precision_score(targets, probs)
 
     print(f"TEST — loss: {loss:.4f} | acc@thr: {acc_thr:.4f} | auc: {auc:.4f}")
-    print(f"Specificity: {spec:.4f} | Sensitivity: {sens:.4f} | "f"Balanced Acc: {bal_acc:.4f} | PR-AUC: {pr_auc:.4f}")
-    print("Confusion Matrix:\n", cm)
+    print(f"Specificity: {spec:.4f} | Sensitivity: {sens:.4f} | "f"Balanced Acc: {bal_acc:.4f}")
+    print(f"PR-AUC from average_precision_score: {pr_auc:.4f}  | PR-AUC from sklearn.metrics: {pr_auc:.4f}")
+    print("Confusion Matrix :\n", cm)
     print("\nClassification Report:\n", classification_report(targets, preds, target_names=CLASS_NAMES, digits=4))
 
     # ROC curve (test)
