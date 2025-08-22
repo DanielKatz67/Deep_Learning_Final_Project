@@ -52,6 +52,18 @@ def compute_pos_weight(image_folder_dataset) -> float:
     return pos_weight
 
 
+def build_weights(image_folder_dataset, device):
+    # ImageFolder: class_to_idx alphabetical => NORMAL=0, PNEUMONIA=1
+    labels = [y for _, y in image_folder_dataset.samples]
+    neg_count = (np.array(labels) == 0).sum()
+    pos_count = (np.array(labels) == 1).sum()
+    print(f"Train counts -> NEG(NORMAL)={neg_count}, POS(PNEUMONIA)={pos_count}, pos_weight={pos_count.item():.3f}")
+    w_neg = torch.tensor([pos_count / neg_count], dtype=torch.float32, device=device)  # ≈ 2.88
+    w_pos = torch.tensor([1.0], dtype=torch.float32, device=device)
+
+    return w_neg, w_pos
+
+
 def copy_files(file_paths, labels, dest_dir):
     for path, label in zip(file_paths, labels):
         dest = os.path.join(dest_dir, label)
@@ -120,7 +132,6 @@ def get_eval_transform(img_size):
         transforms.ToTensor(),
         normalize,
     ])
-
 
 def get_dataloaders(train_dir, val_dir, test_dir, batch_size, num_workers, img_size):
     train_tfms = get_train_transforms(img_size)
