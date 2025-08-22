@@ -357,9 +357,9 @@ def _run_epoch(model, loader, criterion, device, is_train, optimizer=None,
             images = images.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True).float().view(-1)
 
-            if not hasattr(model, "_printed_input_shape"):
-                print("Input batch shape:", images.shape)  # (B, C, H, W)
-                model._printed_input_shape = True
+            # if not hasattr(model, "_printed_input_shape"):
+            #     print("Input batch shape:", images.shape)  # (B, C, H, W)
+            #     model._printed_input_shape = True
 
             logits = model(images)
 
