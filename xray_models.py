@@ -56,6 +56,114 @@ class LayerNorm2d(nn.Module):
         return x
 
 
+# # -----------------------------
+# # Vision Transformer (ViT)
+# # -----------------------------
+# class PatchEmbedding(nn.Module):
+#     def _init_(self, in_channels, patch_size, embed_dim):
+#         super()._init_()
+#         self.patch_size = patch_size
+#         self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=patch_size, stride=patch_size)
+#
+#     def forward(self, x):
+#         x = self.proj(x)  # (B, E, H', W')
+#         x = x.flatten(2)  # (B, E, H'*W')
+#         x = x.transpose(1, 2)  # (B, N, E) where N is number of patches
+#         return x
+#
+#
+# class Attention(nn.Module):
+#     def _init_(self, embed_dim, num_heads):
+#         super()._init_()
+#         self.num_heads = num_heads
+#         self.head_dim = embed_dim // num_heads
+#         self.scale = self.head_dim ** -0.5
+#         self.qkv = nn.Linear(embed_dim, embed_dim * 3, bias=False)
+#         self.proj = nn.Linear(embed_dim, embed_dim)
+#
+#     def forward(self, x):
+#         B, N, C = x.shape
+#         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+#         q, k, v = qkv[0], qkv[1], qkv[2]
+#
+#         attn = (q @ k.transpose(-2, -1)) * self.scale
+#         attn = attn.softmax(dim=-1)
+#
+#         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+#         x = self.proj(x)
+#         return x
+#
+#
+# class MLP(nn.Module):
+#     def _init_(self, in_features, hidden_features, out_features):
+#         super()._init_()
+#         self.fc1 = nn.Linear(in_features, hidden_features)
+#         self.act = nn.GELU()
+#         self.fc2 = nn.Linear(hidden_features, out_features)
+#
+#     def forward(self, x):
+#         x = self.fc1(x)
+#         x = self.act(x)
+#         x = self.fc2(x)
+#         return x
+#
+#
+# class Block(nn.Module):
+#     def _init_(self, embed_dim, num_heads, mlp_ratio=4., qkv_bias=False, drop_rate=0.):
+#         super()._init_()
+#         self.norm1 = nn.LayerNorm(embed_dim, eps=1e-6)
+#         self.attn = Attention(embed_dim, num_heads)
+#         self.norm2 = nn.LayerNorm(embed_dim, eps=1e-6)
+#         mlp_hidden_dim = int(embed_dim * mlp_ratio)
+#         self.mlp = MLP(in_features=embed_dim, hidden_features=mlp_hidden_dim, out_features=embed_dim)
+#
+#     def forward(self, x):
+#         x = x + self.attn(self.norm1(x))
+#         x = x + self.mlp(self.norm2(x))
+#         return x
+#
+#
+# class XRayViT(nn.Module):
+#     def _init_(self, img_size=224, patch_size=16, in_channels=3, embed_dim=768, depth=12, num_heads=12,
+#                mlp_ratio=4., num_classes=1, dropout_p=0.4):
+#         super()._init_()
+#         self.num_patches = (img_size // patch_size) ** 2
+#
+#         self.patch_embed = PatchEmbedding(in_channels, patch_size, embed_dim)
+#
+#         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+#         self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches + 1, embed_dim))
+#
+#         self.pos_drop = nn.Dropout(p=dropout_p)
+#
+#         self.blocks = nn.ModuleList([
+#             Block(embed_dim, num_heads, mlp_ratio)
+#             for _ in range(depth)
+#         ])
+#
+#         self.norm = nn.LayerNorm(embed_dim)
+#         self.head = nn.Linear(embed_dim, num_classes)
+#
+#     def forward_features(self, x):
+#         x = self.patch_embed(x)
+#
+#         cls_token = self.cls_token.expand(x.shape[0], -1, -1)
+#         x = torch.cat((cls_token, x), dim=1)
+#
+#         x = x + self.pos_embed
+#         x = self.pos_drop(x)
+#
+#         for blk in self.blocks:
+#             x = blk(x)
+#
+#         x = self.norm(x)
+#         return x[:, 0]
+#
+#     def forward(self, x):
+#         x = self.forward_features(x)
+#         x = self.head(x)
+#         return x.squeeze(1)
+
 # -----------------------------
 # CNN model (BatchNorm or LayerNorm injected)
 # -----------------------------
@@ -144,9 +252,9 @@ class PatchEmbed(nn.Module):
         # Conv2d does linear patch projection
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
 
-    def forward(self, x):                       # x: (B, C, H, W)
-        x = self.proj(x)                        # (B, E, H/P, W/P)
-        x = x.flatten(2).transpose(1, 2)        # (B, N, E)
+    def forward(self, x):
+        x = self.proj(x)
+        x = x.flatten(2).transpose(1, 2)
         return x
 
 
@@ -219,18 +327,18 @@ class XRayViT(nn.Module):
             if m.bias is not None:
                 nn.init.zeros_(m.bias)
 
-    def forward(self, x):                       # x: (B, 3, H, W)
-        x = self.patch_embed(x)                 # (B, N, E)
+    def forward(self, x):
+        x = self.patch_embed(x)
         B, N, E = x.shape
-        cls = self.cls_token.expand(B, -1, -1)  # (B,1,E)
-        x = torch.cat((cls, x), dim=1)          # (B, N+1, E)
+        cls = self.cls_token.expand(B, -1, -1)
+        x = torch.cat((cls, x), dim=1)
         x = x + self.pos_embed[:, :N+1, :]
         x = self.pos_drop(x)
         for blk in self.blocks:
             x = blk(x)
         x = self.norm(x)
-        cls_out = x[:, 0]                       # (B, E)
-        logits = self.head(cls_out).squeeze(1)  # (B,)
+        cls_out = x[:, 0]
+        logits = self.head(cls_out).squeeze(1)
         return logits
 
 
@@ -294,118 +402,118 @@ def _run_epoch(model, loader, criterion, device, is_train, optimizer=None,
     return avg_loss, acc, auc, pr_auc, probs_np, targets_np
 
 
-def _run_epoch_with_sam(model, loader, criterion, device, is_train, optimizer=None,
-               acc_threshold=0.5, epochNumber=0, epochs=None, tag="",
-               w_neg: float = 1.0, w_pos: float = 1.0):
-    """Core loop used by both train and eval."""
-    model.train() if is_train else model.eval()
-    ctx = nullcontext() if is_train else torch.inference_mode()
-
-    epoch_loss, correct, n = 0.0, 0, 0
-    all_probs, all_targets = [], []
-
-    with ctx:
-        for images, targets in tqdm(loader, desc=f"[{tag}] Epoch {epochNumber}/{epochs}"):
-            images = images.to(device, non_blocking=True)
-            targets = targets.to(device, non_blocking=True).float().view(-1)
-
-            if not hasattr(model, "_printed_input_shape"):
-                print("Input batch shape:", images.shape)  # (B, C, H, W)
-                model._printed_input_shape = True
-
-            w_neg_t = torch.as_tensor(w_neg, device=device, dtype=targets.dtype)
-            w_pos_t = torch.as_tensor(w_pos, device=device, dtype=targets.dtype)
-
-            logits = model(images)
-            # Ensure logits is [B] for BCEWithLogitsLoss
-            if logits.ndim == 2 and logits.size(1) == 1:
-                logits = logits.squeeze(1)
-            elif logits.ndim != 1:
-                raise RuntimeError(f"Expected logits [B] or [B,1], got {tuple(logits.shape)}")
-
-            loss_vec = criterion(logits, targets)  # shape [B]
-            batch_w = torch.where(targets == 1, w_pos_t, w_neg_t)  # shape [B]
-            loss = (loss_vec * batch_w).mean()
-
-            # if is_train:
-            #     optimizer.zero_grad(set_to_none=True)
-            #     loss.backward()
-            #     optimizer.step()
-            if is_train:
-                # ---- SAM: first step (ascent) ----
-                optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                optimizer.first_step(zero_grad=True)
-
-                # ---- SAM: second step (descent) ----
-                logits2 = model(images)
-                if logits2.ndim == 2 and logits2.size(1) == 1:
-                    logits2 = logits2.squeeze(1)
-                elif logits2.ndim != 1:
-                    raise RuntimeError(f"Expected logits [B] or [B,1], got {tuple(logits2.shape)}")
-
-                loss2_vec = criterion(logits2, targets)  # [B]
-                batch_w = torch.where(targets == 1, w_pos_t, w_neg_t)
-                loss2 = (loss2_vec * batch_w).mean()
-
-                loss2.backward()
-                optimizer.second_step(zero_grad=True)
-
-                logits = logits2.detach()  # use second forward for metrics
-                loss_to_log = loss2
-            else:
-                loss_to_log = loss
-
-            probs = torch.sigmoid(logits)
-            preds = (probs >= acc_threshold).long()
-            correct += (preds == targets.long()).sum().item()
-
-            bsz = targets.size(0)
-            n += bsz
-            epoch_loss += loss_to_log.item() * bsz
-
-            all_probs.append(probs.detach().cpu())
-            all_targets.append(targets.detach().cpu())
-
-    avg_loss = epoch_loss /  max(1, n)
-    acc = correct /  max(1, n)
-    probs_np = torch.cat(all_probs).numpy().ravel()
-    targets_np = torch.cat(all_targets).numpy().ravel()
-
-    # ROC-AUC
-    try: auc = roc_auc_score(targets_np, probs_np)
-    except Exception: auc = float("nan")
-
-    # PR-AUC (Average Precision)
-    try: pr_auc = average_precision_score(targets_np, probs_np)
-    except Exception: pr_auc = float("nan")
-
-    return avg_loss, acc, auc, pr_auc, probs_np, targets_np
+# def _run_epoch_with_sam(model, loader, criterion, device, is_train, optimizer=None,
+#                acc_threshold=0.5, epochNumber=0, epochs=None, tag="",
+#                w_neg: float = 1.0, w_pos: float = 1.0):
+#     """Core loop used by both train and eval."""
+#     model.train() if is_train else model.eval()
+#     ctx = nullcontext() if is_train else torch.inference_mode()
+#
+#     epoch_loss, correct, n = 0.0, 0, 0
+#     all_probs, all_targets = [], []
+#
+#     with ctx:
+#         for images, targets in tqdm(loader, desc=f"[{tag}] Epoch {epochNumber}/{epochs}"):
+#             images = images.to(device, non_blocking=True)
+#             targets = targets.to(device, non_blocking=True).float().view(-1)
+#
+#             if not hasattr(model, "_printed_input_shape"):
+#                 print("Input batch shape:", images.shape)  # (B, C, H, W)
+#                 model._printed_input_shape = True
+#
+#             w_neg_t = torch.as_tensor(w_neg, device=device, dtype=targets.dtype)
+#             w_pos_t = torch.as_tensor(w_pos, device=device, dtype=targets.dtype)
+#
+#             logits = model(images)
+#             # Ensure logits is [B] for BCEWithLogitsLoss
+#             if logits.ndim == 2 and logits.size(1) == 1:
+#                 logits = logits.squeeze(1)
+#             elif logits.ndim != 1:
+#                 raise RuntimeError(f"Expected logits [B] or [B,1], got {tuple(logits.shape)}")
+#
+#             loss_vec = criterion(logits, targets)  # shape [B]
+#             batch_w = torch.where(targets == 1, w_pos_t, w_neg_t)  # shape [B]
+#             loss = (loss_vec * batch_w).mean()
+#
+#             # if is_train:
+#             #     optimizer.zero_grad(set_to_none=True)
+#             #     loss.backward()
+#             #     optimizer.step()
+#             if is_train:
+#                 # ---- SAM: first step (ascent) ----
+#                 optimizer.zero_grad(set_to_none=True)
+#                 loss.backward()
+#                 optimizer.first_step(zero_grad=True)
+#
+#                 # ---- SAM: second step (descent) ----
+#                 logits2 = model(images)
+#                 if logits2.ndim == 2 and logits2.size(1) == 1:
+#                     logits2 = logits2.squeeze(1)
+#                 elif logits2.ndim != 1:
+#                     raise RuntimeError(f"Expected logits [B] or [B,1], got {tuple(logits2.shape)}")
+#
+#                 loss2_vec = criterion(logits2, targets)  # [B]
+#                 batch_w = torch.where(targets == 1, w_pos_t, w_neg_t)
+#                 loss2 = (loss2_vec * batch_w).mean()
+#
+#                 loss2.backward()
+#                 optimizer.second_step(zero_grad=True)
+#
+#                 logits = logits2.detach()  # use second forward for metrics
+#                 loss_to_log = loss2
+#             else:
+#                 loss_to_log = loss
+#
+#             probs = torch.sigmoid(logits)
+#             preds = (probs >= acc_threshold).long()
+#             correct += (preds == targets.long()).sum().item()
+#
+#             bsz = targets.size(0)
+#             n += bsz
+#             epoch_loss += loss_to_log.item() * bsz
+#
+#             all_probs.append(probs.detach().cpu())
+#             all_targets.append(targets.detach().cpu())
+#
+#     avg_loss = epoch_loss /  max(1, n)
+#     acc = correct /  max(1, n)
+#     probs_np = torch.cat(all_probs).numpy().ravel()
+#     targets_np = torch.cat(all_targets).numpy().ravel()
+#
+#     # ROC-AUC
+#     try: auc = roc_auc_score(targets_np, probs_np)
+#     except Exception: auc = float("nan")
+#
+#     # PR-AUC (Average Precision)
+#     try: pr_auc = average_precision_score(targets_np, probs_np)
+#     except Exception: pr_auc = float("nan")
+#
+#     return avg_loss, acc, auc, pr_auc, probs_np, targets_np
 
 
 def train_one_epoch(model, loader, epochNumber, optimizer, criterion, device, epochs,
                     w_neg: float = 1.0, w_pos: float = 1.0):
-    # return _run_epoch(model, loader, criterion, device,
-    #                   is_train=True, optimizer=optimizer,
-    #                   acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Train")
-    return _run_epoch_with_sam(model, loader, criterion, device,
+    return _run_epoch(model, loader, criterion, device,
                       is_train=True, optimizer=optimizer,
-                      acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Train",
-                               w_neg=w_neg, w_pos=w_pos)
+                      acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Train")
+    # return _run_epoch_with_sam(model, loader, criterion, device,
+    #                   is_train=True, optimizer=optimizer,
+    #                   acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Train",
+    #                            w_neg=w_neg, w_pos=w_pos)
 
 
 def eval_one_epoch(model, loader, epochNumber, criterion, device, epochs,
                    w_neg: float = 1.0, w_pos: float = 1.0):
-    # return _run_epoch(model, loader, criterion, device,
-    #                   is_train=False, optimizer=None,
-    #                   acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Eval")
-    return _run_epoch_with_sam(model, loader, criterion, device,
+    return _run_epoch(model, loader, criterion, device,
                       is_train=False, optimizer=None,
-                      acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Eval",
-                               w_neg=w_neg, w_pos=w_pos)
+                      acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Eval")
+    # return _run_epoch_with_sam(model, loader, criterion, device,
+    #                   is_train=False, optimizer=None,
+    #                   acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Eval",
+    #                            w_neg=w_neg, w_pos=w_pos)
 
 
-def fit(model, train_loader, val_loader, criterion, optimizer, device, scheduler=None, epochs=15, patience=10, w_neg=1.0, w_pos=1.0):
+def fit(model, train_loader, val_loader, criterion, optimizer, device, scheduler=None, epochs=15, patience=10):
     best_val_auc, no_improve = -np.inf, 0
     ckpt_path = "best_cnn_pneumonia.pt"
     history = {"train_loss": [], "train_acc": [], "train_auc": [], "train_pr_auc": [],
@@ -413,8 +521,8 @@ def fit(model, train_loader, val_loader, criterion, optimizer, device, scheduler
 
     start = time.time()
     for epoch in range(1, epochs+1):
-        tr_loss, tr_acc, tr_auc, tr_pr, _, _ = train_one_epoch(model, train_loader, epoch, optimizer, criterion, device, epochs, w_neg, w_pos)
-        val_loss, val_acc, val_auc, val_pr, _, _ = eval_one_epoch(model, val_loader, epoch, criterion, device, epochs, w_neg, w_pos)
+        tr_loss, tr_acc, tr_auc, tr_pr, _, _ = train_one_epoch(model, train_loader, epoch, optimizer, criterion, device, epochs)
+        val_loss, val_acc, val_auc, val_pr, _, _ = eval_one_epoch(model, val_loader, epoch, criterion, device, epochs)
 
         if scheduler is not None:
             scheduler.step(val_auc)
@@ -482,79 +590,79 @@ def evaluate_with_threshold(model, loader, criterion, threshold, device, epochs)
     plot_roc_curve(fpr, tpr)
 
 
-# ---------- SAM trick ----------
-class SAM(torch.optim.Optimizer):
-    def __init__(self, params, base_optimizer, rho=0.05, **kwargs):
-        assert rho >= 0.0
-        defaults = dict(rho=rho, **kwargs)
-        super().__init__(params, defaults)
-        self.base_optimizer = base_optimizer(self.param_groups, **kwargs)
-        self._skip_second = False
-
-    @torch.no_grad()
-    def first_step(self, zero_grad=False):
-        rho = self.defaults["rho"]
-        grad_norm = self._grad_norm()
-
-        # If no grads yet, skip SAM ascent; do NOT crash
-        if grad_norm is None or grad_norm.item() == 0.0:
-            self._skip_second = True
-            if zero_grad:
-                self.zero_grad()
-            return
-
-        scale = rho / (grad_norm + 1e-12)
-        self._skip_second = False
-
-        for group in self.param_groups:
-            for p in group["params"]:
-                if p.grad is None:
-                    continue
-                e = p.grad * scale
-                p.add_(e)                     # ascent step
-                self.state[p]["e"] = e
-        if zero_grad:
-            self.zero_grad()
-
-    @torch.no_grad()
-    def second_step(self, zero_grad=False):
-        # If first_step skipped (no grads), just do a normal step
-        if self._skip_second:
-            self.base_optimizer.step()
-            if zero_grad:
-                self.zero_grad()
-            self._skip_second = False
-            return
-
-        for group in self.param_groups:
-            for p in group["params"]:
-                if p.grad is None:
-                    continue
-                e = self.state[p].get("e", None)
-                if e is not None:
-                    p.sub_(e)                 # return to w
-
-        self.base_optimizer.step()
-        if zero_grad:
-            self.zero_grad()
-
-    @torch.no_grad()
-    def step(self):  # not used
-        raise RuntimeError("Call first_step/second_step explicitly.")
-
-    def zero_grad(self, set_to_none: bool = False):   # <-- accept the kwarg
-        self.base_optimizer.zero_grad(set_to_none=set_to_none)
-
-    def _grad_norm(self):
-        norms = []
-        dev = None
-        for group in self.param_groups:
-            for p in group["params"]:
-                if p.grad is not None:
-                    g = p.grad.detach()
-                    norms.append(g.norm(p=2))
-                    if dev is None:
-                        dev = g.device
-        if not norms:
-            return torch.tensor(0.0, device=dev or self.param_groups[0]["params"][0].device)
-        return torch.norm(torch.stack(norms), p=2)
+# # ---------- SAM trick ----------
+# class SAM(torch.optim.Optimizer):
+#     def __init__(self, params, base_optimizer, rho=0.05, **kwargs):
+#         assert rho >= 0.0
+#         defaults = dict(rho=rho, **kwargs)
+#         super().__init__(params, defaults)
+#         self.base_optimizer = base_optimizer(self.param_groups, **kwargs)
+#         self._skip_second = False
+#
+#     @torch.no_grad()
+#     def first_step(self, zero_grad=False):
+#         rho = self.defaults["rho"]
+#         grad_norm = self._grad_norm()
+#
+#         # If no grads yet, skip SAM ascent; do NOT crash
+#         if grad_norm is None or grad_norm.item() == 0.0:
+#             self._skip_second = True
+#             if zero_grad:
+#                 self.zero_grad()
+#             return
+#
+#         scale = rho / (grad_norm + 1e-12)
+#         self._skip_second = False
+#
+#         for group in self.param_groups:
+#             for p in group["params"]:
+#                 if p.grad is None:
+#                     continue
+#                 e = p.grad * scale
+#                 p.add_(e)                     # ascent step
+#                 self.state[p]["e"] = e
+#         if zero_grad:
+#             self.zero_grad()
+#
+#     @torch.no_grad()
+#     def second_step(self, zero_grad=False):
+#         # If first_step skipped (no grads), just do a normal step
+#         if self._skip_second:
+#             self.base_optimizer.step()
+#             if zero_grad:
+#                 self.zero_grad()
+#             self._skip_second = False
+#             return
+#
+#         for group in self.param_groups:
+#             for p in group["params"]:
+#                 if p.grad is None:
+#                     continue
+#                 e = self.state[p].get("e", None)
+#                 if e is not None:
+#                     p.sub_(e)                 # return to w
+#
+#         self.base_optimizer.step()
+#         if zero_grad:
+#             self.zero_grad()
+#
+#     @torch.no_grad()
+#     def step(self):  # not used
+#         raise RuntimeError("Call first_step/second_step explicitly.")
+#
+#     def zero_grad(self, set_to_none: bool = False):   # <-- accept the kwarg
+#         self.base_optimizer.zero_grad(set_to_none=set_to_none)
+#
+#     def _grad_norm(self):
+#         norms = []
+#         dev = None
+#         for group in self.param_groups:
+#             for p in group["params"]:
+#                 if p.grad is not None:
+#                     g = p.grad.detach()
+#                     norms.append(g.norm(p=2))
+#                     if dev is None:
+#                         dev = g.device
+#         if not norms:
+#             return torch.tensor(0.0, device=dev or self.param_groups[0]["params"][0].device)
+#         return torch.norm(torch.stack(norms), p=2)
