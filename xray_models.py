@@ -23,37 +23,6 @@ class PneumoCNN(nn.Module):
     def forward(self, x):
         return self.net(x).squeeze(1)  # [B]
 
-# ---------
-# -----------------------------
-# BatchNorm2d (custom)
-# -----------------------------
-class BatchNorm2d(nn.Module):
-    def __init__(self, num_features, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True):
-        super().__init__()
-        self.bn = nn.BatchNorm2d(num_features, eps=eps, momentum=momentum,
-                                 affine=affine, track_running_stats=track_running_stats)
-    def forward(self, x):
-        return self.bn(x)
-
-
-# -----------------------------
-# LayerNorm (2D input)
-# -----------------------------
-class LayerNorm2d(nn.Module):
-    """
-    Channel-first LayerNorm for (N, C, H, W): normalize over C for each (H,W) location uniformly.
-    """
-    def __init__(self, num_channels, eps=1e-5):
-        super().__init__()
-        self.ln = nn.LayerNorm(normalized_shape=num_channels, eps=eps, elementwise_affine=True)
-
-    def forward(self, x):
-        # x: (N, C, H, W) -> move channels to last, apply LN over channels, then move back
-        N, C, H, W = x.shape
-        x = x.permute(0, 2, 3, 1)            # (N, H, W, C)
-        x = self.ln(x)
-        x = x.permute(0, 3, 1, 2).contiguous()  # (N, C, H, W)
-        return x
 
 class XRayCNN(nn.Module):
     def __init__(self, num_classes, norm_layer):
@@ -83,7 +52,6 @@ class XRayCNN(nn.Module):
             nn.Dropout(0.2),
             nn.Linear(64,  num_classes)
         )
-
 
     def _block(self, in_ch, out_ch, norm_layer, kernel_size=3, stride=1, padding=1):
         return nn.Sequential(
@@ -285,6 +253,196 @@ def _run_epoch(model, loader, criterion, device, is_train, optimizer=None,
     return avg_loss, acc, auc, pr_auc, probs_np, targets_np
 
 
+def train_one_epoch(model, loader, epochNumber, optimizer, criterion, device, epochs,
+                    w_neg: float = 1.0, w_pos: float = 1.0):
+    return _run_epoch(model, loader, criterion, device,
+                      is_train=True, optimizer=optimizer,
+                      acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Train")
+
+
+def eval_one_epoch(model, loader, epochNumber, criterion, device, epochs,
+                   w_neg: float = 1.0, w_pos: float = 1.0):
+    return _run_epoch(model, loader, criterion, device,
+                      is_train=False, optimizer=None,
+                      acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Eval")
+
+
+def fit(model, train_loader, val_loader, criterion, optimizer, device, scheduler=None, epochs=15, patience=10):
+    best_val_auc, no_improve = -np.inf, 0
+    ckpt_path = "best_cnn_pneumonia.pt"
+    history = {"train_loss": [], "train_acc": [], "train_auc": [], "train_pr_auc": [],
+               "val_loss": [], "val_acc": [], "val_auc": [], "val_pr_auc": []}
+
+    start = time.time()
+    for epoch in range(1, epochs+1):
+        tr_loss, tr_acc, tr_auc, tr_pr, _, _ = train_one_epoch(model, train_loader, epoch, optimizer, criterion, device, epochs)
+        val_loss, val_acc, val_auc, val_pr, _, _ = eval_one_epoch(model, val_loader, epoch, criterion, device, epochs)
+
+        if scheduler is not None:
+            scheduler.step(val_auc)
+
+        history["train_loss"].append(tr_loss); history["train_acc"].append(tr_acc); history["train_pr_auc"].append(tr_pr); history["train_auc"].append(tr_auc)
+        history["val_loss"].append(val_loss); history["val_acc"].append(val_acc); history["val_pr_auc"].append(val_pr); history["val_auc"].append(val_auc)
+
+        print(f"Train Loss: {tr_loss:.4f}, Accuracy: {tr_acc:.4f}, AUC: {tr_auc:.4f}, PR {tr_pr:.4f}")
+        print(f"Val Loss: {val_loss:.4f}, Accuracy: {val_acc:.4f}, AUC: {val_auc:.4f}, PR {val_pr:.4f}")
+
+        # Early stopping & checkpoint
+        if val_auc > best_val_auc:
+            best_val_auc, no_improve = val_auc, 0
+            torch.save({"model_state": model.state_dict(),
+                        "optimizer_state": optimizer.state_dict(),
+                        "epoch": epoch}, ckpt_path)
+        else:
+            no_improve += 1
+            if no_improve >= patience:
+                print(f"Early stopping at epoch {epoch}. Best val AUC={best_val_auc:.4f}")
+                break
+
+    ckpt = torch.load(ckpt_path, map_location=device)
+    model.load_state_dict(ckpt["model_state"])
+    print(f"Training finished in {(time.time()-start)/60:.1f} min. Best val AUC: {best_val_auc:.4f}")
+    return history, best_val_auc
+
+
+# ---------- operating point & test ----------
+def pick_threshold_youden(y_true, y_prob):
+    fpr, tpr, thr = roc_curve(y_true, y_prob)
+    j = tpr - fpr
+    idx = j[1:].argmax() + 1  # thresholds align with fpr/tpr[1:]
+    return float(thr[idx-1])
+
+
+def evaluate_with_threshold(model, loader, criterion, threshold, device, epochs):
+    loss, acc05, auc, pr_auc, probs, targets = eval_one_epoch(model, loader, 1, criterion, device, epochs)
+    # Print first 10 probabilities and targets for inspection
+    print("probs[:10] =", probs[:10])
+    print("targets[:10] =", targets[:10])
+
+    preds = (probs >= threshold).astype(int)
+    acc_thr = (preds == targets).mean()
+    cm = confusion_matrix(targets, preds)
+    tn, fp, fn, tp = cm.ravel()
+    spec = tn / (tn + fp + 1e-12)
+    sens = tp / (tp + fn + 1e-12)
+    bal_acc = (spec + sens) / 2
+    pr_auc = average_precision_score(targets, probs)
+
+    print(f"TEST — loss: {loss:.4f} | acc@thr: {acc_thr:.4f} | auc: {auc:.4f}")
+    print(f"Specificity: {spec:.4f} | Sensitivity: {sens:.4f} | "f"Balanced Acc: {bal_acc:.4f}")
+    print(f"PR-AUC from average_precision_score: {pr_auc:.4f}  | PR-AUC from sklearn.metrics: {pr_auc:.4f}")
+    print("Confusion Matrix :\n", cm)
+    print("\nClassification Report:\n", classification_report(targets, preds, target_names=CLASS_NAMES, digits=4))
+
+    # ROC curve (test)
+    fpr, tpr, _ = roc_curve(targets, probs)
+    plot_roc_curve(fpr, tpr)
+
+
+# # ---------- normalization layers (we did not end up using these) ----------
+# class BatchNorm2d(nn.Module):
+#     def __init__(self, num_features, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True):
+#         super().__init__()
+#         self.bn = nn.BatchNorm2d(num_features, eps=eps, momentum=momentum,
+#                                  affine=affine, track_running_stats=track_running_stats)
+#     def forward(self, x):
+#         return self.bn(x)
+#
+#
+# class LayerNorm2d(nn.Module):
+#     """
+#     Channel-first LayerNorm for (N, C, H, W): normalize over C for each (H,W) location uniformly.
+#     """
+#     def __init__(self, num_channels, eps=1e-5):
+#         super().__init__()
+#         self.ln = nn.LayerNorm(normalized_shape=num_channels, eps=eps, elementwise_affine=True)
+#
+#     def forward(self, x):
+#         # x: (N, C, H, W) -> move channels to last, apply LN over channels, then move back
+#         N, C, H, W = x.shape
+#         x = x.permute(0, 2, 3, 1)            # (N, H, W, C)
+#         x = self.ln(x)
+#         x = x.permute(0, 3, 1, 2).contiguous()  # (N, C, H, W)
+#         return x
+#
+# # ---------- SAM trick (we did not end up using this) ----------
+# class SAM(torch.optim.Optimizer):
+#     def __init__(self, params, base_optimizer, rho=0.05, **kwargs):
+#         assert rho >= 0.0
+#         defaults = dict(rho=rho, **kwargs)
+#         super().__init__(params, defaults)
+#         self.base_optimizer = base_optimizer(self.param_groups, **kwargs)
+#         self._skip_second = False
+#
+#     @torch.no_grad()
+#     def first_step(self, zero_grad=False):
+#         rho = self.defaults["rho"]
+#         grad_norm = self._grad_norm()
+#
+#         # If no grads yet, skip SAM ascent; do NOT crash
+#         if grad_norm is None or grad_norm.item() == 0.0:
+#             self._skip_second = True
+#             if zero_grad:
+#                 self.zero_grad()
+#             return
+#
+#         scale = rho / (grad_norm + 1e-12)
+#         self._skip_second = False
+#
+#         for group in self.param_groups:
+#             for p in group["params"]:
+#                 if p.grad is None:
+#                     continue
+#                 e = p.grad * scale
+#                 p.add_(e)                     # ascent step
+#                 self.state[p]["e"] = e
+#         if zero_grad:
+#             self.zero_grad()
+#
+#     @torch.no_grad()
+#     def second_step(self, zero_grad=False):
+#         # If first_step skipped (no grads), just do a normal step
+#         if self._skip_second:
+#             self.base_optimizer.step()
+#             if zero_grad:
+#                 self.zero_grad()
+#             self._skip_second = False
+#             return
+#
+#         for group in self.param_groups:
+#             for p in group["params"]:
+#                 if p.grad is None:
+#                     continue
+#                 e = self.state[p].get("e", None)
+#                 if e is not None:
+#                     p.sub_(e)                 # return to w
+#
+#         self.base_optimizer.step()
+#         if zero_grad:
+#             self.zero_grad()
+#
+#     @torch.no_grad()
+#     def step(self):  # not used
+#         raise RuntimeError("Call first_step/second_step explicitly.")
+#
+#     def zero_grad(self, set_to_none: bool = False):   # <-- accept the kwarg
+#         self.base_optimizer.zero_grad(set_to_none=set_to_none)
+#
+#     def _grad_norm(self):
+#         norms = []
+#         dev = None
+#         for group in self.param_groups:
+#             for p in group["params"]:
+#                 if p.grad is not None:
+#                     g = p.grad.detach()
+#                     norms.append(g.norm(p=2))
+#                     if dev is None:
+#                         dev = g.device
+#         if not norms:
+#             return torch.tensor(0.0, device=dev or self.param_groups[0]["params"][0].device)
+#         return torch.norm(torch.stack(norms), p=2)
+#
+# # ---------- train/eval core with SAM (we did not end up using this) ----------
 # def _run_epoch_with_sam(model, loader, criterion, device, is_train, optimizer=None,
 #                acc_threshold=0.5, epochNumber=0, epochs=None, tag="",
 #                w_neg: float = 1.0, w_pos: float = 1.0):
@@ -372,180 +530,17 @@ def _run_epoch(model, loader, criterion, device, is_train, optimizer=None,
 #     except Exception: pr_auc = float("nan")
 #
 #     return avg_loss, acc, auc, pr_auc, probs_np, targets_np
-
-
-def train_one_epoch(model, loader, epochNumber, optimizer, criterion, device, epochs,
-                    w_neg: float = 1.0, w_pos: float = 1.0):
-    return _run_epoch(model, loader, criterion, device,
-                      is_train=True, optimizer=optimizer,
-                      acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Train")
-    # return _run_epoch_with_sam(model, loader, criterion, device,
-    #                   is_train=True, optimizer=optimizer,
-    #                   acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Train",
-    #                            w_neg=w_neg, w_pos=w_pos)
-
-
-def eval_one_epoch(model, loader, epochNumber, criterion, device, epochs,
-                   w_neg: float = 1.0, w_pos: float = 1.0):
-    return _run_epoch(model, loader, criterion, device,
-                      is_train=False, optimizer=None,
-                      acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Eval")
-    # return _run_epoch_with_sam(model, loader, criterion, device,
-    #                   is_train=False, optimizer=None,
-    #                   acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Eval",
-    #                            w_neg=w_neg, w_pos=w_pos)
-
-
-def fit(model, train_loader, val_loader, criterion, optimizer, device, scheduler=None, epochs=15, patience=10):
-    best_val_auc, no_improve = -np.inf, 0
-    ckpt_path = "best_cnn_pneumonia.pt"
-    history = {"train_loss": [], "train_acc": [], "train_auc": [], "train_pr_auc": [],
-               "val_loss": [], "val_acc": [], "val_auc": [], "val_pr_auc": []}
-
-    start = time.time()
-    for epoch in range(1, epochs+1):
-        tr_loss, tr_acc, tr_auc, tr_pr, _, _ = train_one_epoch(model, train_loader, epoch, optimizer, criterion, device, epochs)
-        val_loss, val_acc, val_auc, val_pr, _, _ = eval_one_epoch(model, val_loader, epoch, criterion, device, epochs)
-
-        if scheduler is not None:
-            scheduler.step(val_auc)
-
-        history["train_loss"].append(tr_loss); history["train_acc"].append(tr_acc); history["train_pr_auc"].append(tr_pr); history["train_auc"].append(tr_auc)
-        history["val_loss"].append(val_loss); history["val_acc"].append(val_acc); history["val_pr_auc"].append(val_pr); history["val_auc"].append(val_auc)
-
-        print(f"Train Loss: {tr_loss:.4f}, Accuracy: {tr_acc:.4f}, AUC: {tr_auc:.4f}, PR {tr_pr:.4f}")
-        print(f"Val Loss: {val_loss:.4f}, Accuracy: {val_acc:.4f}, AUC: {val_auc:.4f}, PR {val_pr:.4f}")
-
-        # Early stopping & checkpoint
-        if val_auc > best_val_auc:
-            best_val_auc, no_improve = val_auc, 0
-            torch.save({"model_state": model.state_dict(),
-                        "optimizer_state": optimizer.state_dict(),
-                        "epoch": epoch}, ckpt_path)
-        else:
-            no_improve += 1
-            if no_improve >= patience:
-                print(f"Early stopping at epoch {epoch}. Best val AUC={best_val_auc:.4f}")
-                break
-
-    ckpt = torch.load(ckpt_path, map_location=device)
-    model.load_state_dict(ckpt["model_state"])
-    print(f"Training finished in {(time.time()-start)/60:.1f} min. Best val AUC: {best_val_auc:.4f}")
-    return history, best_val_auc
-
-# ---------- operating point & test ----------
-# def pick_threshold_from_val(y_true, y_prob):
-#     prec, rec, thr = precision_recall_curve(y_true, y_prob)  # thr len = len(prec)-1
-#     f1 = 2*prec[:-1]*rec[:-1]/(prec[:-1]+rec[:-1]+1e-12)
-#     return float(thr[np.argmax(f1)])
-
-
-def pick_threshold_youden(y_true, y_prob):
-    fpr, tpr, thr = roc_curve(y_true, y_prob)
-    j = tpr - fpr
-    idx = j[1:].argmax() + 1  # thresholds align with fpr/tpr[1:]
-    return float(thr[idx-1])
-
-
-def evaluate_with_threshold(model, loader, criterion, threshold, device, epochs):
-    loss, acc05, auc, pr_auc, probs, targets = eval_one_epoch(model, loader, 1, criterion, device, epochs)
-    # Print first 10 probabilities and targets for inspection
-    print("probs[:10] =", probs[:10])
-    print("targets[:10] =", targets[:10])
-
-    preds = (probs >= threshold).astype(int)
-    acc_thr = (preds == targets).mean()
-    cm = confusion_matrix(targets, preds)
-    tn, fp, fn, tp = cm.ravel()
-    spec = tn / (tn + fp + 1e-12)
-    sens = tp / (tp + fn + 1e-12)
-    bal_acc = (spec + sens) / 2
-    pr_auc = average_precision_score(targets, probs)
-
-    print(f"TEST — loss: {loss:.4f} | acc@thr: {acc_thr:.4f} | auc: {auc:.4f}")
-    print(f"Specificity: {spec:.4f} | Sensitivity: {sens:.4f} | "f"Balanced Acc: {bal_acc:.4f}")
-    print(f"PR-AUC from average_precision_score: {pr_auc:.4f}  | PR-AUC from sklearn.metrics: {pr_auc:.4f}")
-    print("Confusion Matrix :\n", cm)
-    print("\nClassification Report:\n", classification_report(targets, preds, target_names=CLASS_NAMES, digits=4))
-
-    # ROC curve (test)
-    fpr, tpr, _ = roc_curve(targets, probs)
-    plot_roc_curve(fpr, tpr)
-
-
-# # ---------- SAM trick ----------
-# class SAM(torch.optim.Optimizer):
-#     def __init__(self, params, base_optimizer, rho=0.05, **kwargs):
-#         assert rho >= 0.0
-#         defaults = dict(rho=rho, **kwargs)
-#         super().__init__(params, defaults)
-#         self.base_optimizer = base_optimizer(self.param_groups, **kwargs)
-#         self._skip_second = False
 #
-#     @torch.no_grad()
-#     def first_step(self, zero_grad=False):
-#         rho = self.defaults["rho"]
-#         grad_norm = self._grad_norm()
 #
-#         # If no grads yet, skip SAM ascent; do NOT crash
-#         if grad_norm is None or grad_norm.item() == 0.0:
-#             self._skip_second = True
-#             if zero_grad:
-#                 self.zero_grad()
-#             return
+# def train_one_epoch_with_sam(model, loader, epochNumber, optimizer, criterion, device, epochs,
+#     return _run_epoch_with_sam(model, loader, criterion, device,
+#                       is_train=True, optimizer=optimizer,
+#                       acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Train",
+#                                w_neg=w_neg, w_pos=w_pos)
 #
-#         scale = rho / (grad_norm + 1e-12)
-#         self._skip_second = False
-#
-#         for group in self.param_groups:
-#             for p in group["params"]:
-#                 if p.grad is None:
-#                     continue
-#                 e = p.grad * scale
-#                 p.add_(e)                     # ascent step
-#                 self.state[p]["e"] = e
-#         if zero_grad:
-#             self.zero_grad()
-#
-#     @torch.no_grad()
-#     def second_step(self, zero_grad=False):
-#         # If first_step skipped (no grads), just do a normal step
-#         if self._skip_second:
-#             self.base_optimizer.step()
-#             if zero_grad:
-#                 self.zero_grad()
-#             self._skip_second = False
-#             return
-#
-#         for group in self.param_groups:
-#             for p in group["params"]:
-#                 if p.grad is None:
-#                     continue
-#                 e = self.state[p].get("e", None)
-#                 if e is not None:
-#                     p.sub_(e)                 # return to w
-#
-#         self.base_optimizer.step()
-#         if zero_grad:
-#             self.zero_grad()
-#
-#     @torch.no_grad()
-#     def step(self):  # not used
-#         raise RuntimeError("Call first_step/second_step explicitly.")
-#
-#     def zero_grad(self, set_to_none: bool = False):   # <-- accept the kwarg
-#         self.base_optimizer.zero_grad(set_to_none=set_to_none)
-#
-#     def _grad_norm(self):
-#         norms = []
-#         dev = None
-#         for group in self.param_groups:
-#             for p in group["params"]:
-#                 if p.grad is not None:
-#                     g = p.grad.detach()
-#                     norms.append(g.norm(p=2))
-#                     if dev is None:
-#                         dev = g.device
-#         if not norms:
-#             return torch.tensor(0.0, device=dev or self.param_groups[0]["params"][0].device)
-#         return torch.norm(torch.stack(norms), p=2)
+# def eval_one_epoch_with_sam(model, loader, epochNumber, criterion, device, epochs,
+#                    w_neg: float = 1.0, w_pos: float = 1.0):
+#     return _run_epoch_with_sam(model, loader, criterion, device,
+#                       is_train=False, optimizer=None,
+#                       acc_threshold=0.5, epochNumber=epochNumber, epochs=epochs, tag="Eval",
+#                                w_neg=w_neg, w_pos=w_pos)
